@@ -1,0 +1,163 @@
+import de.gesellix.docker.client.DockerClientImpl
+import de.gesellix.docker.client.LocalDocker
+import de.gesellix.docker.client.stack.DeployConfigReader
+import de.gesellix.docker.client.stack.DeployStackOptions
+import okhttp3.MediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody
+import okhttp3.Response
+
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+
+buildscript {
+  repositories {
+    mavenLocal()
+    gradlePluginPortal()
+    jcenter()
+    mavenCentral()
+  }
+  dependencies {
+    classpath "com.github.ben-manes:gradle-versions-plugin:$gradleVersionsPluginVersion"
+
+    classpath("org.springframework.boot:spring-boot-gradle-plugin:${springBootVersion}")
+    classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:${kotlinVersion}")
+    classpath("org.jetbrains.kotlin:kotlin-allopen:${kotlinVersion}")
+
+    classpath "de.gesellix:gradle-docker-plugin:$dockerPluginVersion"
+    classpath "de.gesellix:docker-client:$dockerClientVersion"
+    classpath "com.squareup.okhttp3:okhttp:3.9.1"
+  }
+}
+
+ext {
+  dockerClient = new DockerClientImpl()
+  namespace = "foo"
+}
+
+apply plugin: 'kotlin'
+apply plugin: 'kotlin-spring'
+apply plugin: 'org.springframework.boot'
+
+compileKotlin {
+  kotlinOptions.jvmTarget = "1.8"
+}
+compileTestKotlin {
+  kotlinOptions.jvmTarget = "1.8"
+}
+
+repositories {
+  mavenCentral()
+}
+
+dependencies {
+  testCompile project(':app')
+  testCompile('org.springframework.boot:spring-boot-starter-test')
+}
+
+apply plugin: 'de.gesellix.docker'
+
+task configureCouchdb {
+  // setup couchdb 2.x after starting the service
+  doLast {
+    logger.info("configure db...")
+    MediaType JSON = MediaType.parse("application/json; charset=utf-8")
+    OkHttpClient client = new OkHttpClient()
+
+    def get = { String url ->
+      Request request = new Request.Builder()
+          .url(url)
+          .get()
+          .build()
+      Response response = client.newCall(request).execute()
+      return response.body().string()
+    }
+
+    def put = { String url, String json ->
+      RequestBody body = RequestBody.create(JSON, json)
+      Request request = new Request.Builder()
+          .url(url)
+          .put(body)
+          .build()
+      Response response = client.newCall(request).execute()
+      return response.body().string()
+    }
+
+    def awaitCouchUp = new CountDownLatch(1)
+
+    CompletableFuture.runAsync({
+      while (true) {
+        try {
+          def response = get("http://localhost:5984/_up")
+          logger.info("couchdb/_up response: $response")
+          if (response.trim() == "{\"status\":\"ok\"}") {
+            logger.info("success -> continue")
+            awaitCouchUp.countDown()
+            return
+          }
+          else {
+            logger.info("failure -> wait(2s)")
+            Thread.sleep(2000)
+          }
+        }
+        catch (Exception e) {
+          logger.info("health check failed - ignore", e)
+          Thread.sleep(2000)
+        }
+      }
+    })
+
+    def success = awaitCouchUp.await(60, TimeUnit.SECONDS)
+    if (!success) {
+      throw new GradleException("couchdb is not up.")
+    }
+
+    put("http://localhost:5984/_metadata", "")
+    put("http://localhost:5984/_replicator", "")
+    put("http://localhost:5984/_users", "")
+  }
+}
+
+task setupInfra {
+  doFirst {
+    if (!LocalDocker.supportsStack()) {
+      throw new GradleException("Integration tests need Docker 1.13+")
+    }
+    def dockerInfo = dockerClient.info().content
+    if (dockerInfo.Swarm.LocalNodeState != "active") {
+      logger.lifecycle("init swarm...")
+      dockerClient.initSwarm()
+    }
+  }
+
+  doLast {
+    logger.lifecycle("deploy db stack...")
+    def composeStack = file('integrationtest-stack.yml').newInputStream()
+    String workingDir = file('integrationtest-stack.yml').parent
+    def deployConfig = new DeployConfigReader(dockerClient).loadCompose(namespace, composeStack, workingDir, System.getenv())
+    dockerClient.stackDeploy(namespace, deployConfig, new DeployStackOptions())
+  }
+
+  finalizedBy configureCouchdb
+}
+
+task cleanupDatabase {
+  doLast {
+    dockerClient.stackRm(namespace)
+  }
+}
+
+check.dependsOn setupInfra
+check.finalizedBy cleanupDatabase
+check.shouldRunAfter ':app:check'
+
+task testNG(type: Test) {
+  useTestNG()
+}
+check.dependsOn testNG
+
+tasks.withType(Test).each {
+  it.dependsOn setupInfra
+}

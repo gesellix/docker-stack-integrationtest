@@ -1,0 +1,23 @@
+---
+version: "3.2"
+
+services:
+
+  couchdb:
+    image: apache/couchdb:2.1.1
+    ports:
+      - "5984:5984"
+#    env:
+#      - "COUCHDB.USERNAME=root"
+#      - "COUCHDB.PASSWORD=a-secret"
+#    volumes:
+#      - "couch-data:/opt/couchdb/data"
+
+  elasticsearch:
+    image: elasticsearch:5.1.1
+    ports:
+      - "9200:9200"
+
+#volumes:
+#  couch-data:
+#    external: true

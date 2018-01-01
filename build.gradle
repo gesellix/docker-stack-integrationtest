@@ -1,0 +1,20 @@
+buildscript {
+  ext {
+    dockerClientVersion = '2017-12-29T22-53-02'
+    dockerPluginVersion = '2017-12-29T23-56-56'
+    gradleVersionsPluginVersion = '0.17.0'
+    kotlinVersion = '1.2.10'
+    springBootVersion = '1.5.9.RELEASE'
+  }
+  repositories {
+    mavenLocal()
+    gradlePluginPortal()
+    jcenter()
+    mavenCentral()
+  }
+}
+
+task wrapper(type: Wrapper) {
+  gradleVersion = '4.4.1'
+  distributionType = Wrapper.DistributionType.ALL
+}

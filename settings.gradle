@@ -1,0 +1,3 @@
+rootProject.name = 'docker-stack-integrationtest'
+include 'app'
+include 'integrationtest'
