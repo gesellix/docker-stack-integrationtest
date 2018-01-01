@@ -98,12 +98,12 @@ task configureCouchdb {
             return
           }
           else {
-            logger.info("failure -> wait(2s)")
+            logger.lifecycle(".")
             Thread.sleep(2000)
           }
         }
-        catch (Exception e) {
-          logger.info("health check failed - ignore", e)
+        catch (Exception ignored) {
+          logger.lifecycle(",")
           Thread.sleep(2000)
         }
       }
@@ -143,14 +143,14 @@ task setupInfra {
   finalizedBy configureCouchdb
 }
 
-task cleanupDatabase {
+task tearDownInfra {
   doLast {
     dockerClient.stackRm(namespace)
   }
 }
 
 check.dependsOn setupInfra
-check.finalizedBy cleanupDatabase
+check.finalizedBy tearDownInfra
 check.shouldRunAfter ':app:check'
 
 task testNG(type: Test) {
